@@ -316,6 +316,93 @@ lemma one_add_sq_pos (u : ℝ) : 0 < 1 + u ^ 2 := zero_lt_one.trans_le (by simpa
 theorem prelim_decay (ψ : ℝ → ℂ) (u : ℝ) : ‖𝓕 (ψ : ℝ → ℂ) u‖ ≤ ∫ t, ‖ψ t‖ :=
   VectorFourier.norm_fourierIntegral_le_integral_norm ..
 
+/-- The `L¹` norm of the difference between a function and its translate by `h > 0` is at most
+`h` times the total variation of the function. -/
+lemma lintegral_enorm_sub_comp_add_le {E : Type*} [NormedAddCommGroup E] {f : ℝ → E}
+    (hf : AEStronglyMeasurable f) {h : ℝ} (hh : 0 < h) :
+    ∫⁻ t, ‖f (t + h) - f t‖ₑ ≤ ENNReal.ofReal h * eVariationOn f univ := by
+  set F : ℝ → ENNReal := fun t ↦ ‖f (t + h) - f t‖ₑ
+  have hF : AEMeasurable F :=
+    ((hf.comp_measurePreserving (measurePreserving_add_right volume h)).sub hf).enorm
+  calc ∫⁻ t, F t
+      = ∫⁻ t in ⋃ n : ℤ, Ioc (0 + n • h) (0 + (n + 1) • h), F t := by
+        rw [iUnion_Ioc_add_zsmul hh, Measure.restrict_univ]
+    _ = ∑' n : ℤ, ∫⁻ t in Ioc (0 + n • h) (0 + (n + 1) • h), F t :=
+        lintegral_iUnion (fun _ ↦ measurableSet_Ioc) (pairwise_disjoint_Ioc_add_zsmul 0 h) F
+    _ = ∑' n : ℤ, ∫⁻ s in Ioc 0 h, F (s + n * h) := by
+        congr 1; ext n
+        rw [← (measurePreserving_add_right volume (n * h)).setLIntegral_comp_preimage_emb
+          (measurableEmbedding_addRight _), preimage_add_const_Ioc]
+        congr 3 <;> simp [zsmul_eq_mul, add_mul]
+    _ = ∫⁻ s in Ioc 0 h, ∑' n : ℤ, F (s + n * h) :=
+        (lintegral_tsum fun n ↦
+          (hF.comp_quasiMeasurePreserving
+            (measurePreserving_add_right volume _).quasiMeasurePreserving).restrict).symm
+    _ ≤ ∫⁻ _ in Ioc 0 h, eVariationOn f univ := by
+        refine lintegral_mono fun s ↦ ENNReal.summable.tsum_le_of_sum_le fun S ↦ ?_
+        let N : ℕ := S.sup Int.natAbs
+        let u : ℕ → ℝ := fun i ↦ s + ((i : ℝ) - N) * h
+        have hu : Monotone u := fun i j hij ↦ by
+          have : (i : ℝ) ≤ j := by exact_mod_cast hij
+          simp only [u]; gcongr
+        have hS : S ⊆ (Finset.range (2 * N + 1)).image (fun i : ℕ ↦ (i : ℤ) - N) := by
+          intro n hn
+          have : n.natAbs ≤ N := Finset.le_sup (f := Int.natAbs) hn
+          exact Finset.mem_image.2 ⟨(n + N).toNat, by simp; omega, by omega⟩
+        calc ∑ n ∈ S, F (s + n * h)
+            ≤ ∑ n ∈ (Finset.range (2 * N + 1)).image (fun i : ℕ ↦ (i : ℤ) - N),
+                F (s + n * h) := Finset.sum_le_sum_of_subset hS
+          _ = ∑ i ∈ Finset.range (2 * N + 1), edist (f (u (i + 1))) (f (u i)) := by
+              rw [Finset.sum_image fun _ _ _ _ h ↦ by simpa using h]
+              refine Finset.sum_congr rfl fun i _ ↦ ?_
+              simp only [F, u, edist_eq_enorm_sub]
+              push_cast
+              ring_nf
+          _ ≤ eVariationOn f univ := eVariationOn.sum_le hu fun _ ↦ mem_univ _
+    _ = ENNReal.ofReal h * eVariationOn f univ := by
+        rw [setLIntegral_const, Real.volume_Ioc, sub_zero, mul_comm]
+
+/-- The Fourier transform turns the difference operator `ψ ↦ ψ(· + h) - ψ` into multiplication by
+`𝐞(hu) - 1`. -/
+lemma fourier_sub_comp_add (hψ : Integrable ψ) (h u : ℝ) :
+    𝓕 (fun t ↦ ψ (t + h) - ψ t) u = ((𝐞 (h * u) : ℂ) - 1) * 𝓕 ψ u := by
+  rw [F_sub (hψ.comp_add_right h) hψ, sub_mul, one_mul]
+  congr 1
+  have := congrFun (VectorFourier.fourierIntegral_comp_add_right 𝐞 volume (innerₗ ℝ) ψ h) u
+  simp only [Circle.smul_def, smul_eq_mul] at this
+  refine this.trans (congrArg (· * _) ?_)
+  simp [mul_comm]
+
+/-- Bound on `(𝐞(hu) - 1) 𝓕 ψ(u)` by the `L¹` norm of `ψ(· + h) - ψ`. -/
+lemma enorm_fourier_mul_le (hψ : Integrable ψ) (h u : ℝ) :
+    ‖(𝐞 (h * u) : ℂ) - 1‖ₑ * ‖𝓕 ψ u‖ₑ ≤ ∫⁻ t, ‖ψ (t + h) - ψ t‖ₑ := by
+  have hφ : Integrable fun t ↦ ψ (t + h) - ψ t := (hψ.comp_add_right h).sub hψ
+  rw [← enorm_mul, ← fourier_sub_comp_add hψ h u, ← ofReal_integral_norm_eq_lintegral_enorm hφ,
+    ← ofReal_norm]
+  exact ENNReal.ofReal_le_ofReal (Real.norm_fourier_le_integral_norm _ _)
+
+/-- `|𝐞(hu) - 1| / h → 2π|u|` as `h → 0⁺`. -/
+lemma tendsto_norm_fourierChar_sub_one_div (u : ℝ) :
+    Tendsto (fun h : ℝ ↦ ‖(𝐞 (h * u) : ℂ) - 1‖ / h) (𝓝[>] 0) (𝓝 (2 * π * ‖u‖)) := by
+  have hd : HasDerivAt (fun h : ℝ ↦ (𝐞 (h * u) : ℂ)) (2 * π * u * I) 0 := by
+    have : HasDerivAt (fun h : ℝ ↦ ((2 * π * (h * u) : ℝ) : ℂ) * I) (2 * π * u * I) 0 := by
+      simpa using (((hasDerivAt_id (0 : ℝ)).mul_const u).const_mul (2 * π)).ofReal_comp.mul_const I
+    simpa [Real.fourierChar_apply] using this.cexp
+  have := hd.tendsto_slope_zero_right.norm
+  refine (this.congr' ?_).trans (le_of_eq ?_)
+  · filter_upwards [self_mem_nhdsWithin] with h (hh : 0 < h)
+    simp [abs_of_pos hh, div_eq_inv_mul]
+  · simp [abs_of_pos pi_pos]
+
+/-- If `|𝐞(hu) - 1| ^ k X ≤ h ^ k V` for all `h > 0`, then `(2π|u|) ^ k X ≤ V`. -/
+lemma mul_le_of_forall_fourierChar {u X V : ℝ} (k : ℕ)
+    (H : ∀ h > 0, ‖(𝐞 (h * u) : ℂ) - 1‖ ^ k * X ≤ h ^ k * V) :
+    (2 * π * ‖u‖) ^ k * X ≤ V := by
+  refine le_of_tendsto (((tendsto_norm_fourierChar_sub_one_div u).pow k).mul_const X) ?_
+  filter_upwards [self_mem_nhdsWithin] with h (hh : 0 < h)
+  rw [div_pow, div_mul_eq_mul_div, div_le_iff₀ (by positivity), mul_comm V]
+  exact H h hh
+
 @[blueprint "prelim-decay-2"
   (title := "Preliminary decay bound II")
   (statement := /--
@@ -330,10 +417,55 @@ and the claim then follows from the triangle inequality. -/)
   (discussion := 562)]
 theorem prelim_decay_2 (ψ : ℝ → ℂ) (hψ : Integrable ψ) (hvar : BoundedVariationOn ψ Set.univ)
     (u : ℝ) (hu : u ≠ 0) :
-    ‖𝓕 (ψ : ℝ → ℂ) u‖ ≤ (eVariationOn ψ Set.univ).toReal / (2 * π * ‖u‖) := by sorry
+    ‖𝓕 (ψ : ℝ → ℂ) u‖ ≤ (eVariationOn ψ Set.univ).toReal / (2 * π * ‖u‖) := by
+  rw [le_div_iff₀' (by positivity)]
+  refine pow_one (2 * π * ‖u‖) ▸ mul_le_of_forall_fourierChar 1 fun h hh ↦ ?_
+  have := (enorm_fourier_mul_le hψ h u).trans
+    (lintegral_enorm_sub_comp_add_le hψ.aestronglyMeasurable hh)
+  rw [pow_one, pow_one]
+  simpa [ENNReal.toReal_mul, hh.le] using
+    ENNReal.toReal_mono (ENNReal.mul_ne_top ENNReal.ofReal_ne_top hvar) this
 
 noncomputable def AbsolutelyContinuous (f : ℝ → ℂ) : Prop := (∀ᵐ x, DifferentiableAt ℝ f x) ∧
   ∀ a b : ℝ, f b - f a = ∫ t in a..b, deriv f t
+
+/-- The second difference of an absolutely continuous function `ψ` has `L¹` norm at most `h ^ 2`
+times the total variation of `ψ'`. -/
+lemma lintegral_enorm_second_diff_le (habscont : AbsolutelyContinuous ψ)
+    (hvar : BoundedVariationOn (deriv ψ) Set.univ) {h : ℝ} (hh : 0 < h) :
+    ∫⁻ t, ‖(ψ (t + h + h) - ψ (t + h)) - (ψ (t + h) - ψ t)‖ₑ ≤
+      ENNReal.ofReal h * (ENNReal.ofReal h * eVariationOn (deriv ψ) univ) := by
+  have hmeas : Measurable (deriv ψ) := measurable_deriv ψ
+  have hbdd (x : ℝ) : ‖deriv ψ x‖ ≤ ‖deriv ψ 0‖ + (eVariationOn (deriv ψ) univ).toReal := by
+    have : dist (deriv ψ x) (deriv ψ 0) ≤ (eVariationOn (deriv ψ) univ).toReal := by
+      rw [dist_edist]
+      exact ENNReal.toReal_mono hvar (eVariationOn.edist_le _ (mem_univ _) (mem_univ _))
+    rw [dist_eq_norm] at this
+    linarith [norm_le_insert' (deriv ψ x) (deriv ψ 0)]
+  have hint (c a b : ℝ) : IntervalIntegrable (fun s ↦ deriv ψ (s + c)) volume a b :=
+    (intervalIntegrable_const (c := ‖deriv ψ 0‖ + (eVariationOn (deriv ψ) univ).toReal)).mono_fun
+      (hmeas.comp (measurable_add_const c)).aestronglyMeasurable
+      (Eventually.of_forall fun s ↦ by simpa using (hbdd _).trans (le_abs_self _))
+  have key (t : ℝ) : ‖(ψ (t + h + h) - ψ (t + h)) - (ψ (t + h) - ψ t)‖ₑ ≤
+      ∫⁻ s in Ioc 0 h, ‖deriv ψ ((s + t) + h) - deriv ψ (s + t)‖ₑ := by
+    have e1 : ψ (t + h + h) - ψ (t + h) = ∫ s in (0 : ℝ)..h, deriv ψ (s + (t + h)) := by
+      rw [intervalIntegral.integral_comp_add_right, habscont.2]
+      congr 1 <;> ring
+    have e2 : ψ (t + h) - ψ t = ∫ s in (0 : ℝ)..h, deriv ψ (s + t) := by
+      rw [intervalIntegral.integral_comp_add_right, habscont.2, zero_add, add_comm h]
+    rw [e1, e2, ← intervalIntegral.integral_sub (hint _ _ _) (hint _ _ _),
+      intervalIntegral.integral_of_le hh.le]
+    simp_rw [← add_assoc]
+    exact enorm_integral_le_lintegral_enorm _
+  calc _ ≤ ∫⁻ t, ∫⁻ s in Ioc 0 h, ‖deriv ψ ((s + t) + h) - deriv ψ (s + t)‖ₑ := lintegral_mono key
+    _ = ∫⁻ s in Ioc 0 h, ∫⁻ t, ‖deriv ψ ((s + t) + h) - deriv ψ (s + t)‖ₑ :=
+        lintegral_lintegral_swap (by fun_prop)
+    _ = ∫⁻ _ in Ioc 0 h, ∫⁻ t, ‖deriv ψ (t + h) - deriv ψ t‖ₑ := by
+        congr 1; ext s
+        exact lintegral_add_left_eq_self (fun t ↦ ‖deriv ψ (t + h) - deriv ψ t‖ₑ) s
+    _ ≤ ∫⁻ _ in Ioc 0 h, ENNReal.ofReal h * eVariationOn (deriv ψ) univ :=
+        lintegral_mono fun _ ↦ lintegral_enorm_sub_comp_add_le hmeas.aestronglyMeasurable hh
+    _ = _ := by rw [setLIntegral_const, Real.volume_Ioc, sub_zero, mul_comm]
 
 @[blueprint "prelim-decay-3"
   (title := "Preliminary decay bound III")
@@ -350,7 +482,14 @@ for all non-zero $u \in \R$.
 theorem prelim_decay_3 (ψ : ℝ → ℂ) (hψ : Integrable ψ)
     (habscont : AbsolutelyContinuous ψ)
     (hvar : BoundedVariationOn (deriv ψ) Set.univ) (u : ℝ) (hu : u ≠ 0) :
-    ‖𝓕 (ψ : ℝ → ℂ) u‖ ≤ (eVariationOn (deriv ψ) Set.univ).toReal / (2 * π * ‖u‖) ^ 2 := by sorry
+    ‖𝓕 (ψ : ℝ → ℂ) u‖ ≤ (eVariationOn (deriv ψ) Set.univ).toReal / (2 * π * ‖u‖) ^ 2 := by
+  rw [le_div_iff₀' (by positivity)]
+  refine mul_le_of_forall_fourierChar 2 fun h hh ↦ ?_
+  have hφ : Integrable fun t ↦ ψ (t + h) - ψ t := (hψ.comp_add_right h).sub hψ
+  have := (enorm_fourier_mul_le hφ h u).trans (lintegral_enorm_second_diff_le habscont hvar hh)
+  rw [fourier_sub_comp_add hψ, enorm_mul, ← mul_assoc, ← sq] at this
+  simpa [ENNReal.toReal_mul, hh.le, ← mul_assoc, ← sq] using
+    ENNReal.toReal_mono (by finiteness) this
 
 @[blueprint "decay-alt"
   (title := "Decay bound, alternate form")
